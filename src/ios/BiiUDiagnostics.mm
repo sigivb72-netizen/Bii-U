@@ -483,6 +483,31 @@ namespace
 		raise(sig);
 	}
 
+	// brk #0xf00d (StikDebug TXM protocol) and brk #0x69 (older JIT-enabler protocol). When no
+	// debugger script handles them they arrive here as SIGTRAP: skip the instruction and return 0.
+	constexpr uint32_t kBrkF00D = 0xD4200000u | (0xF00Du << 5);
+	constexpr uint32_t kBrk69 = 0xD4200000u | (0x69u << 5);
+	std::atomic<uint32_t> s_unhandledJitTraps{0};
+
+	void TrapHandler(int sig, siginfo_t* info, void* context)
+	{
+		ucontext_t* uc = (ucontext_t*)context;
+		if (uc && uc->uc_mcontext)
+		{
+			auto* ss = &uc->uc_mcontext->__ss;
+			const uint32_t insn = *(const uint32_t*)ss->__pc;
+			if (insn == kBrkF00D || insn == kBrk69)
+			{
+				ss->__pc += 4;
+				ss->__x[0] = 0;
+				s_unhandledJitTraps.fetch_add(1, std::memory_order_relaxed);
+				return;
+			}
+		}
+		// a real trap (assertion, __builtin_trap): report it like any other crash
+		CrashHandler(sig, info, context);
+	}
+
 	void InstallCrashHandler()
 	{
 		const int sigs[] = { SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT, SIGSYS };
@@ -493,6 +518,13 @@ namespace
 			sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
 			sigfillset(&sa.sa_mask);
 			sigaction(sig, &sa, &s_oldActions[sig]);
+		}
+		{
+			struct sigaction sa{};
+			sa.sa_sigaction = TrapHandler;
+			sa.sa_flags = SA_SIGINFO;
+			sigemptyset(&sa.sa_mask);
+			sigaction(SIGTRAP, &sa, &s_oldActions[SIGTRAP]);
 		}
 		// an alternate stack so stack overflows can still be reported
 		static uint8_t* altStack = (uint8_t*)malloc(256 * 1024);

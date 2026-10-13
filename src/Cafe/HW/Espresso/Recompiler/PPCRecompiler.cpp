@@ -15,6 +15,9 @@
 #include "util/helpers/helpers.h"
 #include "util/MemMapper/MemMapper.h"
 
+#if BOOST_OS_IOS
+#include <os/proc.h>
+#endif
 #if defined(_WIN32)
 #include <windows.h>
 #else
@@ -162,9 +165,13 @@ bool PPCRecompiler_readTXMEnvVar()
     return PPCRecompiler_readBoolEnvVar("HAS_TXM") == 1;
 }
 
+static std::atomic<bool> s_txmDetached{false};
+
 static void PPCRecompiler_finishJitMappingSession()
 {
-    if (PPCRecompiler_readTXMEnvVar())
+    // Bii-U: detach exactly once. After the detach no debugger services brk #0xf00d, so a
+    // second detach (MeloCafe called this on every game launch) traps.
+    if (PPCRecompiler_readTXMEnvVar() && !s_txmDetached.exchange(true))
     {
         cemuLog_log(LogType::Force, "Recompiler: detaching TXM debugger after JIT mapping");
         JIT26Detach();
@@ -186,8 +193,22 @@ DualMapRegion PPCRecompiler_allocateDualMap(size_t size)
     }
     if (PPCRecompiler_readTXMEnvVar())
     {
+        if (s_txmDetached.load())
+        {
+            BiiUTelemetry::Breadcrumb("JIT: TXM debugger already detached, cannot map more JIT memory");
+            return r;
+        }
         rxPtr = BreakGetJITMapping(nullptr, size);
-        BiiUTelemetry::Breadcrumb(rxPtr ? "JIT: debugger returned a TXM mapping" : "JIT: debugger did NOT return a TXM mapping (brk #0xf00d unhandled), falling back to mmap");
+        if (!rxPtr)
+        {
+            // Bii-U: MeloCafe fell back to mmap here, which on a TXM device gives memory that
+            // cannot execute -> crash on the first recompiled block. Fail instead, so a smaller
+            // size is tried and, failing that, the interpreter is used.
+            BiiUTelemetry::Breadcrumb("JIT: debugger did NOT return a TXM mapping (is StikDebug's JIT script running for this app?)");
+            cemuLog_log(LogType::Force, "JIT: the debugger did not prepare a {} MB TXM region. Enable JIT through StikDebug with the script for this app.", size / (1024 * 1024));
+            return r;
+        }
+        BiiUTelemetry::Breadcrumb("JIT: debugger returned a TXM mapping");
     }
 
     if (!rxPtr)
@@ -296,6 +317,7 @@ struct DualMapArena
         {
             cemuLog_log(LogType::Force, "JIT arena: allocation failed (rw={:p} rx={:p} size={}MB)",
                 region.rwAlias, region.rxAlias, size / 1024 / 1024);
+            region = {};
             return false;
         }
         reset();
@@ -1160,7 +1182,10 @@ void PPCRecompiler_deleteFunction(PPCRecFunction_t* func)
 
     if (func->dualMapRegion.rwAlias)
     {
-        PPCRecompiler_releaseJitArena(func->dualMapRegion);
+        // Bii-U (from EspressU): do not return the code to the arena here. Another emulated
+        // core can still be executing inside it, and the next compile would overwrite the
+        // instructions under its feet. The memory is reclaimed when the arena is reset at
+        // shutdown.
         func->dualMapRegion   = DualMapRegion{};
         func->x86Code         = nullptr;
         func->x86CodeWritable = nullptr;
@@ -1185,8 +1210,19 @@ void PPCRecompiler_invalidateRangeInternal(uint32 startAddr, uint32 endAddr)
 	PPCRecFunction_t* rFunc;
 
 	// mark range as unvisited
-	for (uint64 currentAddr = (uint64)startAddr&~3; currentAddr < (uint64)(endAddr&~3); currentAddr += 4)
-		ppcRecompilerInstanceData->ppcRecompilerDirectJumpTable[currentAddr / 4] = PPCRecompiler_leaveRecompilerCode_unvisited;
+	// Bii-U (from EspressU): skip lookup-table blocks that were never committed; writing
+	// to them faults (reserved address space without backing pages).
+	for (uint64 blockStart = (uint64)startAddr & ~3; blockStart < (uint64)(endAddr & ~3); )
+	{
+		const uint64 blockEnd = std::min<uint64>((blockStart / PPC_REC_ALLOC_BLOCK_SIZE + 1) * PPC_REC_ALLOC_BLOCK_SIZE, (uint64)(endAddr & ~3));
+		const uint64 blockIndex = blockStart / PPC_REC_ALLOC_BLOCK_SIZE;
+		if (blockIndex < ppcRecompiler_reservedBlockMask.size() && ppcRecompiler_reservedBlockMask[blockIndex])
+		{
+			for (uint64 currentAddr = blockStart; currentAddr < blockEnd; currentAddr += 4)
+				ppcRecompilerInstanceData->ppcRecompilerDirectJumpTable[currentAddr / 4] = PPCRecompiler_leaveRecompilerCode_unvisited;
+		}
+		blockStart = blockEnd;
+	}
 
 	// add entry to invalidation queue
 	PPCRecompilerState.invalidationRanges.emplace_back(startAddr, endAddr-startAddr);
@@ -1290,9 +1326,41 @@ bool PPCRecompiler_Init26() {
     
     try
     {
-        if (!s_jitArena.init(1024 * 1024 * 1024))
+        // Bii-U (from EspressU): MeloCafe asked for a fixed 1 GB region. Under TXM the debugger
+        // has to prepare every page of it, and on a 4 GB device it competes with guest memory.
+        // Start from 1/8 of the memory iOS lets this process use and step down on failure.
+        constexpr size_t kMB = 1024ull * 1024ull;
+        constexpr size_t kArenaSizes[] = { 512 * kMB, 384 * kMB, 256 * kMB, 128 * kMB, 64 * kMB };
+        size_t firstCandidate = 0;
+#if BOOST_OS_IOS
+        const uint64 availableBytes = os_proc_available_memory();
+        if (availableBytes != 0)
         {
-            cemuLog_log(LogType::Force, "JIT arena allocation failed, disabling JIT");
+            const size_t budget = (size_t)(availableBytes / 8);
+            while (firstCandidate + 1 < std::size(kArenaSizes) && kArenaSizes[firstCandidate] > budget && kArenaSizes[firstCandidate] > 128 * kMB)
+                firstCandidate++;
+            cemuLog_log(LogType::Force, "JIT arena: {} MB available to this app, starting at {} MB",
+                (uint64)(availableBytes / kMB), kArenaSizes[firstCandidate] / kMB);
+        }
+#endif
+        size_t chosenArena = 0;
+        for (size_t i = firstCandidate; i < std::size(kArenaSizes); i++)
+        {
+            if (s_jitArena.init(kArenaSizes[i]))
+            {
+                chosenArena = kArenaSizes[i];
+                break;
+            }
+            cemuLog_log(LogType::Force, "JIT arena: {} MB unavailable, trying smaller", kArenaSizes[i] / kMB);
+#if defined(__APPLE__) && defined(__aarch64__)
+            if (PPCRecompiler_readTXMEnvVar() && s_txmDetached.load())
+                break;
+#endif
+        }
+        if (!chosenArena)
+        {
+            cemuLog_log(LogType::Force, "JIT arena allocation failed at every size, disabling JIT");
+            BiiUTelemetry::Breadcrumb("JIT: arena allocation failed, using the interpreter");
             ppcRecompilerEnabled = false;
             ppcRecompilerInited = false;
         }

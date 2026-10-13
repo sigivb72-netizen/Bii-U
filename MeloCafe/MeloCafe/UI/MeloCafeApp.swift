@@ -65,9 +65,12 @@ class ContentHostingController: UIHostingController<AnyView> {
     
     override func viewDidLoad() {
         super.viewDidLoad()
-        installJITTrapHandler()
+        // The SIGTRAP handler for the JIT handshake now lives in the core
+        // (BiiUDiagnostics.mm): it only skips brk #0xf00d / #0x69 and reports any other trap
+        // as a crash instead of silently stepping over it.
         configureJITEnvironment()
         if !checkAppEntitlement("get-task-allow") {
+            Diagnostics.log("get-task-allow entitlement missing: forcing the interpreter")
             CemuConfigWrapper.shared().cpuMode = .multicoreInterpreter
         }
         setupEmulation()

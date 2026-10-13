@@ -572,7 +572,10 @@ void CemuRun()
 
 
 bool CemuInitJIT() {
-    PPCRecompiler_Init26();
+    // Bii-U: MeloCafe had no return statement here. Falling off the end of a non-void
+    // function is undefined behaviour and Apple clang emits a trap instruction for it,
+    // so enabling JIT hit a brk right at startup.
+    return PPCRecompiler_Init26();
 }
 
 
