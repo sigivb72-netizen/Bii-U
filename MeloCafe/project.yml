@@ -60,7 +60,6 @@ targets:
     sources:
       - path: MeloCafe
         excludes:
-          - Depedencies/**
           - Assets/Info.plist
           - Assets/MeloNX.xcconfig
           - Assets/*.icon/**
@@ -71,11 +70,15 @@ targets:
         product: Melo-Controller
       - framework: ../build-ios/out/Cemu.framework
         embed: true
-      - framework: MeloCafe/Depedencies/MoltenVK.xcframework
+      - framework: ../dependencies/MoltenVK.xcframework
         embed: true
         link: false
       - sdk: GameController.framework
       - sdk: Metal.framework
+    settings:
+      base:
+        # Set on the target: XcodeGen otherwise picks up any Info.plist it finds itself.
+        INFOPLIST_FILE: MeloCafe/Assets/Info.plist
     postBuildScripts:
       - name: Copy Cemu data files into the bundle
         basedOnDependencyAnalysis: false

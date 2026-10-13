@@ -17,6 +17,15 @@ pb -c "Set :CFBundleShortVersionString $VERSION" "$PL" 2>/dev/null || pb -c "Add
 pb -c "Set :CFBundleVersion $BUILD" "$PL" 2>/dev/null || pb -c "Add :CFBundleVersion string $BUILD" "$PL"
 pb -c "Set :BiiUCommit ${GITHUB_SHA:-local}" "$PL" 2>/dev/null || pb -c "Add :BiiUCommit string ${GITHUB_SHA:-local}" "$PL"
 
+# Sanity-check the Info.plist: a wrong one gives a black screen or no icon on device.
+pb -c "Print :UIApplicationSceneManifest:UISceneConfigurations:UIWindowSceneSessionRoleApplication:0:UISceneDelegateClassName" "$PL" | grep -q MainSceneDelegate \
+  || { echo "::error::Info.plist has no main scene delegate (black screen on launch)"; exit 1; }
+pb -c "Print :CFBundleSupportedPlatforms:0" "$PL" | grep -qx iPhoneOS \
+  || { echo "::error::Info.plist CFBundleSupportedPlatforms is not iPhoneOS"; exit 1; }
+pb -c "Print :CFBundleIcons:CFBundlePrimaryIcon" "$PL" >/dev/null \
+  || { echo "::error::Info.plist has no app icon"; exit 1; }
+[ -d "$APP/CemuData/gameProfiles/default" ] || { echo "::error::game profiles missing from the bundle"; exit 1; }
+
 for fw in "$APP"/Frameworks/*.framework; do
   codesign -f -s - "$fw"
 done
