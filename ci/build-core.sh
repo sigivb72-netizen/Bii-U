@@ -39,7 +39,7 @@ for attempt in 1 2 3; do
   sleep $((attempt * 30))
 done
 
-cmake --build build-ios --target CemuBin 2>&1 | tee build.log
+cmake --build build-ios --target CemuBin -- -k 0 2>&1 | tee build.log
 
 FW=$(find build-ios -type d -name Cemu.framework -not -path '*/CMakeFiles/*' -not -path 'build-ios/out/*' | head -n1)
 if [ -z "$FW" ]; then echo "::error::build finished but produced no Cemu.framework"; exit 1; fi
