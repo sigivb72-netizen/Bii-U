@@ -26,6 +26,7 @@ namespace BiiUTelemetry
 		std::atomic<uint32_t> frameCount{0};
 		std::atomic<float> frameMs[kFrameRingSize]{};
 		std::atomic<uint32_t> hitches{0};      // frames slower than 50 ms
+		std::atomic<float> worstFrameMs{0};    // slowest frame since the sampler last read it
 		std::atomic<uint32_t> hostPresents{0}; // drawables presented to the TV layer
 
 		// shaders / pipelines

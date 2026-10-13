@@ -274,6 +274,8 @@ namespace
 			BiiUSnapshot s{};
 
 			FrameStatsLastSecond(s.fps, s.frameMsAvg, s.frameMsMax);
+			// the real worst frame since the last sample (a long frame can fall outside the 1 s window)
+			s.frameMsMax = std::max(s.frameMsMax, c.worstFrameMs.exchange(0.0f, std::memory_order_relaxed));
 			s.hitchesTotal = c.hitches.load(std::memory_order_relaxed);
 			s.hitchesLastSec = s.hitchesTotal - prev.hitches;
 

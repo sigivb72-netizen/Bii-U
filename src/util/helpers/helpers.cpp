@@ -177,6 +177,33 @@ void SetThreadName(const char* name)
 #endif
 #elif BOOST_OS_MACOS || BOOST_OS_IOS
 	pthread_setname_np(name);
+#if BOOST_OS_IOS
+	// Bii-U: give each emulator thread a QoS class. MeloCafe left everything at the default
+	// class, so on A14 (2 performance + 4 efficiency cores) iOS was free to run the emulated
+	// Wii U cores and the GPU thread on efficiency cores while JIT / shader compile workers
+	// held the performance cores, which showed up as stutter during compile bursts.
+	{
+		struct QosRule { const char* prefix; qos_class_t qos; int relPriority; };
+		static const QosRule kRules[] = {
+			{ "OSSched[", QOS_CLASS_USER_INTERACTIVE, 0 },  // emulated PowerPC cores
+			{ "LatteThread", QOS_CLASS_USER_INTERACTIVE, 0 }, // GPU command processor
+			{ "PPCRecompiler", QOS_CLASS_USER_INITIATED, -4 }, // JIT compile workers
+			{ "mtlShaderComp", QOS_CLASS_USER_INITIATED, -8 },
+			{ "compilePl", QOS_CLASS_USER_INITIATED, -8 },
+			{ "plCacheCompiler", QOS_CLASS_USER_INITIATED, -8 },
+			{ "plCacheWriter", QOS_CLASS_UTILITY, 0 },
+			{ "WUD ReadAhead", QOS_CLASS_USER_INITIATED, 0 },
+		};
+		for (const auto& rule : kRules)
+		{
+			if (std::strncmp(name, rule.prefix, std::strlen(rule.prefix)) == 0)
+			{
+				pthread_set_qos_class_self_np(rule.qos, rule.relPriority);
+				break;
+			}
+		}
+	}
+#endif
 #else
 	if(std::strlen(name) > 15)
 		cemuLog_log(LogType::Force, "Truncating thread name {} because it was longer than 15 characters", name);

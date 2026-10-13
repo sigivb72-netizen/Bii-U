@@ -24,6 +24,8 @@ namespace BiiUTelemetry
 		c.frameMs[idx & (kFrameRingSize - 1)].store(ms, std::memory_order_relaxed);
 		if (ms > 50.0f && ms < 5000.0f)
 			c.hitches.fetch_add(1, std::memory_order_relaxed);
+		float worst = c.worstFrameMs.load(std::memory_order_relaxed);
+		while (ms > worst && ms < 5000.0f && !c.worstFrameMs.compare_exchange_weak(worst, ms, std::memory_order_relaxed)) {}
 	}
 
 	// breadcrumb file: path is set once by the diagnostics module at startup
