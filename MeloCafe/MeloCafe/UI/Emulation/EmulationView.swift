@@ -19,6 +19,7 @@ struct EmulationView: View {
     @State private var showingEmulatedDevices = false
     @ObservedObject private var configManager = ConfigManager.shared
     @ObservedObject private var air = Air.shared
+    @AppStorage("biiu.showOverlay") private var showDiagnosticsOverlay = true
     @Environment(\.verticalSizeClass) var verticalSizeClass
     
     private var visibleScreens: [Bool] {
@@ -89,6 +90,12 @@ struct EmulationView: View {
             }
         }
         .statusBarHidden(true)
+        .overlay(alignment: .top) {
+            if showDiagnosticsOverlay {
+                DiagnosticsOverlay()
+                    .padding(.top, 6)
+            }
+        }
         .overlay(alignment: .topTrailing) {
             if configManager.emulateSkylanderPortal.wrappedValue ||
                 configManager.emulateInfinityBase.wrappedValue ||

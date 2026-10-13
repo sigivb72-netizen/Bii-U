@@ -23,11 +23,15 @@ class CemuManager {
 
         let executable = Bundle.main.executablePath
 
+        Diagnostics.installBundledData()
+
         documents.path.withCString { dataPtr in
             executable!.withCString { execPtr in
                 CemuInitialize(execPtr, dataPtr, dataPtr, dataPtr, dataPtr)
             }
         }
+
+        Diagnostics.start()
     }
 
     static func loadGameIcon(_ titleId: UInt64) -> Data? {

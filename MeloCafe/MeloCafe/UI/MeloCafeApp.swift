@@ -102,6 +102,11 @@ class ContentHostingController: UIHostingController<AnyView> {
         }
     }
     
+    private func envValue(_ name: String) -> String {
+        guard let value = getenv(name) else { return "unset" }
+        return String(cString: value)
+    }
+
     private func setupEmulation() {
         let cemuConfig = CemuConfigWrapper.shared()
         if FileManager.default.fileExists(atPath: URL.configURL.path) {
@@ -118,7 +123,11 @@ class ContentHostingController: UIHostingController<AnyView> {
         setupControllers()
         
         if CPUMode(cemuConfig.cpuMode) != .interpreter {
+            Diagnostics.log("CPU mode \(CPUMode(cemuConfig.cpuMode)), calling CemuInitJIT (DUAL_MAPPED_JIT=\(envValue("DUAL_MAPPED_JIT")) HAS_TXM=\(envValue("HAS_TXM")))")
             CemuInitJIT()
+            Diagnostics.log("CemuInitJIT returned")
+        } else {
+            Diagnostics.log("CPU mode is interpreter, JIT not initialised")
         }
     }
     

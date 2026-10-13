@@ -97,6 +97,8 @@ struct SettingsView: View {
                 } header: {
                     Text("CPU")
                 }
+
+                DiagnosticsSettingsSection()
                 
                 Section("App") {
                     NavigationLink("App Icon Switcher") {

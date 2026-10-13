@@ -178,8 +178,17 @@ DualMapRegion PPCRecompiler_allocateDualMap(size_t size)
 
     void* rxPtr = nullptr;
 
+    {
+        char crumb[160];
+        snprintf(crumb, sizeof(crumb), "JIT: allocating %zu MB dual-mapped region (TXM path: %s, debugged: %s)",
+            size / (1024 * 1024), PPCRecompiler_readTXMEnvVar() ? "yes" : "no", checkDebugged() ? "yes" : "no");
+        BiiUTelemetry::Breadcrumb(crumb);
+    }
     if (PPCRecompiler_readTXMEnvVar())
+    {
         rxPtr = BreakGetJITMapping(nullptr, size);
+        BiiUTelemetry::Breadcrumb(rxPtr ? "JIT: debugger returned a TXM mapping" : "JIT: debugger did NOT return a TXM mapping (brk #0xf00d unhandled), falling back to mmap");
+    }
 
     if (!rxPtr)
         rxPtr = mmap(nullptr, size, PROT_READ | PROT_EXEC, MAP_ANON | MAP_PRIVATE, -1, 0);
@@ -214,6 +223,7 @@ DualMapRegion PPCRecompiler_allocateDualMap(size_t size)
 
     r.rxAlias = rxPtr;
     r.rwAlias = (void*)rwAddr;
+    BiiUTelemetry::Breadcrumb("JIT: dual-mapped region ready");
 
    // int result2 = func();
     // cemuLog_log(LogType::Force, "Executed JIT-ed function, result: {}\n", result2);
