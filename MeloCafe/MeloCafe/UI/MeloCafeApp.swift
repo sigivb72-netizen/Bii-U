@@ -22,11 +22,17 @@ final class MainSceneDelegate: UIResponder, UIWindowSceneDelegate {
                options connectionOptions: UIScene.ConnectionOptions) {
         guard let windowScene = scene as? UIWindowScene else { return }
         let controller: ContentHostingController
+#if BIIU_IOS27_SDK
         if #available(iOS 27.0, *) {
             controller = AccessoryContentHostingController()
         } else {
             controller = ContentHostingController()
         }
+#else
+        // The external-display accessory API needs the iOS 27 SDK (Xcode 27); build with
+        // SWIFT_ACTIVE_COMPILATION_CONDITIONS=BIIU_IOS27_SDK to enable it.
+        controller = ContentHostingController()
+#endif
         let window = UIWindow(windowScene: windowScene)
         self.window = window
         
@@ -152,6 +158,7 @@ class ContentHostingController: UIHostingController<AnyView> {
     }
 }
 
+#if BIIU_IOS27_SDK
 @available(iOS 27.0, *)
 final class AccessoryContentHostingController: ContentHostingController {
     private var displayRegistration: UISceneAccessoryRegistration?
@@ -168,3 +175,4 @@ final class AccessoryContentHostingController: ContentHostingController {
         }
     }
 }
+#endif
