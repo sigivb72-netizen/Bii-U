@@ -1,3 +1,4 @@
+#include "Common/BiiUTelemetry.h"
 #include "H264DecInternal.h"
 #include "util/highresolutiontimer/HighResolutionTimer.h"
 
@@ -192,6 +193,13 @@ namespace H264
 
 			bt.Stop();
 			double decodeTime = bt.GetElapsedMilliseconds();
+			{
+				auto& biiu = BiiUTelemetry::Get();
+				const uint64 decodeNs = (uint64)(decodeTime * 1e6);
+				biiu.h264Frames.fetch_add(1, std::memory_order_relaxed);
+				biiu.h264DecodeNs.fetch_add(decodeNs, std::memory_order_relaxed);
+				BiiUTelemetry::AddMax(biiu.h264MaxDecodeNs, decodeNs);
+			}
 
 			cemu_assert(s_dec_op.u4_frame_decoded_flag);
 			cemu_assert_debug(s_dec_op.u4_num_bytes_consumed == decodedSlice.dataToDecode.m_length);

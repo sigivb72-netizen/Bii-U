@@ -1,3 +1,4 @@
+#include "Common/BiiUTelemetry.h"
 #include "Cafe/HW/Latte/Renderer/Metal/RendererShaderMtl.h"
 #include "Cafe/HW/Latte/Renderer/Metal/MetalRenderer.h"
 #include "Cafe/HW/Latte/Renderer/Metal/MetalCommon.h"
@@ -318,6 +319,8 @@ MTL::Library* RendererShaderMtl::LibraryFromAIR(std::span<uint8> data)
 
 void RendererShaderMtl::CompileInternal()
 {
+	BiiUTelemetry::Get().shaderCompiles.fetch_add(1, std::memory_order_relaxed);
+	BiiUTelemetry::ScopedTimer biiuCompileTimer(BiiUTelemetry::Get().shaderCompileNs);
 	NS_STACK_SCOPED NS::AutoreleasePool* pool = NS::AutoreleasePool::alloc()->init();
     MTL::Library* library = nullptr;
 

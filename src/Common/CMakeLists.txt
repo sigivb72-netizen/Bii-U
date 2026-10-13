@@ -1,4 +1,6 @@
 add_library(CemuCommon 
+  BiiUTelemetry.cpp
+  BiiUTelemetry.h
   betype.h
   cpu_features.cpp
   cpu_features.h

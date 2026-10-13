@@ -1,3 +1,4 @@
+#include "Common/BiiUTelemetry.h"
 #include "Cafe/HW/Espresso/Interpreter/PPCInterpreterInternal.h"
 #include "PPCFunctionBoundaryTracker.h"
 #include "PPCRecompiler.h"
@@ -362,6 +363,15 @@ struct DualMapArena
         if (region.size)
             freeRanges.emplace(0, region.size);
     }
+
+    size_t usedBytes()
+    {
+        std::lock_guard lock(mutex);
+        size_t freeBytes = 0;
+        for (const auto& r : freeRanges)
+            freeBytes += r.second;
+        return region.size > freeBytes ? region.size - freeBytes : 0;
+    }
 };
 
 static DualMapArena s_jitArena;
@@ -574,6 +584,31 @@ void PPCRecompiler_attemptEnter(PPCInterpreter_t* hCPU, uint32 enterAddress)
 bool PPCRecompiler_enabled()
 {
     return ppcRecompilerEnabled;
+}
+
+// Bii-U diagnostics: 0 = interpreter, 1 = recompiler (W^X), 2 = dual-mapped, 3 = dual-mapped via TXM debugger
+void PPCRecompiler_GetDiagnostics(int* mode, uint64* arenaBytes, uint64* arenaUsed)
+{
+    int m = 0;
+    if (ppcRecompilerEnabled)
+    {
+#if defined(__APPLE__) && defined(__aarch64__)
+        m = s_dualMapJITEnabled ? (PPCRecompiler_readTXMEnvVar() ? 3 : 2) : 1;
+#else
+        m = 1;
+#endif
+    }
+    if (mode) *mode = m;
+    if (arenaBytes) *arenaBytes = s_jitArena.region.rxAlias ? s_jitArena.region.size : 0;
+    if (arenaUsed) *arenaUsed = s_jitArena.region.rxAlias ? s_jitArena.usedBytes() : 0;
+}
+
+bool PPCRecompiler_IsJitCodeAddress(const void* p)
+{
+    if (!s_jitArena.region.rxAlias)
+        return false;
+    const uint8* base = (const uint8*)s_jitArena.region.rxAlias;
+    return (const uint8*)p >= base && (const uint8*)p < base + s_jitArena.region.size;
 }
 
 void PPCRecompiler_Enable()
@@ -952,12 +987,17 @@ void PPCRecompiler_recompileAtAddress(uint32 address)
 	PPCRecompilerState.recompilerSpinlock.unlock();
 
 	std::vector<std::pair<MPTR, uint32>> functionEntryPoints;
+	const uint64 biiuCompileStart = BiiUTelemetry::NowNs();
 	auto func = PPCRecompiler_recompileFunction(range, entryAddresses, functionEntryPoints, funcBoundaries);
+	BiiUTelemetry::Get().jitCompileNs.fetch_add(BiiUTelemetry::NowNs() - biiuCompileStart, std::memory_order_relaxed);
 
 	if (!func)
 	{
+		BiiUTelemetry::Get().jitFailed.fetch_add(1, std::memory_order_relaxed);
 		return; // recompilation failed
 	}
+	if (BiiUTelemetry::Get().jitBlocks.fetch_add(1, std::memory_order_relaxed) == 0)
+		BiiUTelemetry::Breadcrumb("JIT: first block compiled");
 	bool r = PPCRecompiler_makeRecompiledFunctionActive(address, range, func, functionEntryPoints);
 }
 
@@ -1123,6 +1163,7 @@ void PPCRecompiler_invalidateRangeInternal(uint32 startAddr, uint32 endAddr)
 {
 	if (ppcRecompilerEnabled == false)
 		return;
+	BiiUTelemetry::Get().jitInvalidations.fetch_add(1, std::memory_order_relaxed);
 	if (startAddr >= PPC_REC_CODE_AREA_SIZE)
 		return;
 	cemu_assert_debug(endAddr >= startAddr);

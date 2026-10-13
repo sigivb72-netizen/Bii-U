@@ -161,6 +161,12 @@ void cemuLog_createLogFile(bool triggeredByCrash)
 		return;
 
 	const auto path = cemuLog_GetLogFilePath();
+	if (!triggeredByCrash)
+	{
+		// Bii-U: keep the previous session's log so it can be shared after a crash
+		std::error_code ec;
+		fs::rename(path, ActiveSettings::GetUserDataPath("log_prev.txt"), ec);
+	}
 	LogContext.file_stream.open(fs::resolvePathCI(path), std::ios::out);
 	if (LogContext.file_stream.fail())
 	{

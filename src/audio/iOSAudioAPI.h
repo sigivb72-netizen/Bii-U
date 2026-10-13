@@ -48,6 +48,7 @@ private:
 
     AudioRingBuffer m_buffer;
     std::atomic_bool m_isPlaying = false;
+    std::atomic_bool m_isTV = false; // Bii-U diagnostics: only the TV stream feeds the overlay counters
 };
 
 #endif // TARGET_OS_IOS

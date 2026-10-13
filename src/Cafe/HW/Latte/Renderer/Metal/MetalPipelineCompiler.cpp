@@ -1,3 +1,4 @@
+#include "Common/BiiUTelemetry.h"
 #include "Cafe/HW/Latte/Renderer/Metal/MetalCommon.h"
 #include "Cafe/HW/Latte/Renderer/Metal/MetalPipelineCompiler.h"
 #include "Cafe/HW/Latte/Renderer/Metal/MetalRenderer.h"
@@ -417,6 +418,16 @@ bool MetalPipelineCompiler::Compile(bool forceCompile, bool isRenderThread, bool
     auto end = std::chrono::high_resolution_clock::now();
 
     auto creationDuration = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+    {
+        auto& biiu = BiiUTelemetry::Get();
+        biiu.pipelineCompiles.fetch_add(1, std::memory_order_relaxed);
+        biiu.pipelineCompileNs.fetch_add((uint64)creationDuration, std::memory_order_relaxed);
+        if (isRenderThread)
+        {
+            biiu.pipelineSyncCompiles.fetch_add(1, std::memory_order_relaxed);
+            biiu.pipelineSyncNs.fetch_add((uint64)creationDuration, std::memory_order_relaxed);
+        }
+    }
 
    	if (error)
    	{

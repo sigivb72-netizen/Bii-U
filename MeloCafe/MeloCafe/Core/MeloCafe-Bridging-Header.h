@@ -11,6 +11,7 @@
 #include "../../../src/config/CemuConfigWrapper.h"
 #include "../../../src/config/GraphicPackWrapper.h"
 #include "../../../src/gui/uikit/EmulatedUSBDevices.h"
+#include "../../../src/ios/BiiUDiagnostics.h"
 
 void CemuUIKit_UpdateMainWindowSize(CGFloat width, CGFloat height, CGFloat scale);
 

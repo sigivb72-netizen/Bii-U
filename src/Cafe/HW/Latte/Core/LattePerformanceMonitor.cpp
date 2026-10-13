@@ -1,11 +1,13 @@
 #include "Cafe/HW/Latte/Core/LattePerformanceMonitor.h"
 #include "Cafe/HW/Latte/Core/LatteOverlay.h"
 #include "WindowSystem.h"
+#include "Common/BiiUTelemetry.h"
 
 performanceMonitor_t performanceMonitor{};
 
 void LattePerformanceMonitor_frameEnd()
 {
+	BiiUTelemetry::OnGuestFrame();
 	// per-frame stats
 	performanceMonitor.gpuTime_shaderCreate.frameFinished();
 	performanceMonitor.gpuTime_frameTime.frameFinished();

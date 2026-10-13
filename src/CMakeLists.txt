@@ -103,6 +103,8 @@ if(IOS)
 		config/GraphicPackWrapper.mm
 		gui/uikit/EmulatedUSBDevices.h
 		gui/uikit/EmulatedUSBDevices.mm
+		ios/BiiUDiagnostics.h
+		ios/BiiUDiagnostics.mm
 	)
 	set_source_files_properties(gui/uikit/EmulatedUSBDevices.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 	target_link_libraries(CemuBin PRIVATE
