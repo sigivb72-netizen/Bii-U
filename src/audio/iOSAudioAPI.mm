@@ -149,7 +149,8 @@ bool IOSAudioAPI::FeedBlock(sint16* data)
     m_isTV.store(isTV, std::memory_order_relaxed);
     if (!isTV)
     {
-        biiu.audioPadActive.store(1, std::memory_order_relaxed);
+        if (g_padAudio.get() == this)
+            biiu.audioPadActive.store(1, std::memory_order_relaxed);
         return ok;
     }
     biiu.audioBlocksFed.fetch_add(1, std::memory_order_relaxed);

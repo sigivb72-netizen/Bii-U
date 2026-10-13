@@ -142,7 +142,7 @@ struct DiagnosticsOverlay: View {
                     line("Video", String(format: "%.0f fps  %.1f ms/frame  max %.1f", s.h264FpsLastSec, s.h264AvgMsLastSec, s.h264MaxMs),
                          s.h264AvgMsLastSec > 25 ? .orange : nil)
                 }
-                line("Mem", String(format: "%.0f MB used  %.0f MB left", s.memFootprintMB, s.memAvailableMB),
+                line("Mem", String(format: "%.0f used (Wii U %.0f, GPU %.0f) %.0f left", s.memFootprintMB, s.memGuestMB, s.memGpuMB, s.memAvailableMB),
                      s.memAvailableMB > 0 && s.memAvailableMB < 400 ? .red : nil)
                 line("Heat", thermalText(s.thermalState), s.thermalState >= 2 ? .red : (s.thermalState == 1 ? .yellow : nil))
             }

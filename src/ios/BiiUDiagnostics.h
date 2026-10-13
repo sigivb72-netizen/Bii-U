@@ -59,6 +59,8 @@ typedef struct BiiUSnapshot {
     // system
     float memFootprintMB;
     float memAvailableMB;           // before iOS kills the app (os_proc_available_memory)
+    float memGuestMB;               // resident emulated Wii U RAM
+    float memGpuMB;                 // Metal device allocations
     int32_t thermalState;           // 0 nominal, 1 fair, 2 serious, 3 critical
     bool gameRunning;
     uint64_t titleId;

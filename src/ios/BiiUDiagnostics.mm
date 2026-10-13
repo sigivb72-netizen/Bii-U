@@ -6,6 +6,10 @@
 #include "Cafe/CafeSystem.h"
 #include "config/ActiveSettings.h"
 #include "Cemu/Logging/CemuLogging.h"
+#include "Cafe/HW/MMU/MMU.h"
+#include "Cafe/HW/Latte/Renderer/Renderer.h"
+#include <dispatch/dispatch.h>
+#include <sys/mman.h>
 
 #import <Foundation/Foundation.h>
 
@@ -79,6 +83,44 @@ namespace
 		if (@available(iOS 13.0, *))
 			return (float)((double)os_proc_available_memory() / (1024.0 * 1024.0));
 		return 0.0f;
+	}
+
+	// resident (touched) pages of the emulated Wii U memory, in MB
+	float GuestResidentMB()
+	{
+		if (!memory_base)
+			return 0.0f;
+		MMURange* ranges[] = { &mmuRange_LOW0, &mmuRange_TRAMPOLINE_AREA, &mmuRange_CODECAVE, &mmuRange_TEXT_AREA, &mmuRange_CEMU_AREA,
+			&mmuRange_MEM2, &mmuRange_OVERLAY_AREA, &mmuRange_FGBUCKET, &mmuRange_TILINGAPERTURE, &mmuRange_MEM1, &mmuRange_RPLLOADER, &mmuRange_SHARED_AREA };
+		const size_t page = (size_t)getpagesize();
+		static std::vector<char> vec;
+		uint64_t residentPages = 0;
+		for (MMURange* r : ranges)
+		{
+			if (!r->isMapped() || r->getSize() == 0)
+				continue;
+			uint8* start = memory_base + r->getBase();
+			const size_t len = r->getSize();
+			const size_t pages = (len + page - 1) / page;
+			vec.resize(pages);
+			if (mincore((caddr_t)start, len, vec.data()) != 0)
+				continue;
+			for (size_t i = 0; i < pages; i++)
+				if (vec[i] & MINCORE_INCORE)
+					residentPages++;
+		}
+		return (float)((double)residentPages * page / (1024.0 * 1024.0));
+	}
+
+	// Metal/Vulkan device allocations (textures, buffers) in MB
+	float GpuAllocatedMB()
+	{
+		if (!g_renderer)
+			return 0.0f;
+		int used = 0, total = 0;
+		if (!g_renderer->GetVRAMInfo(used, total))
+			return 0.0f;
+		return (float)used;
 	}
 
 	int ThermalState()
@@ -285,6 +327,8 @@ namespace
 
 			s.memFootprintMB = MemFootprintMB();
 			s.memAvailableMB = MemAvailableMB();
+			s.memGuestMB = GuestResidentMB();
+			s.memGpuMB = CafeSystem::IsTitleRunning() ? GpuAllocatedMB() : 0.0f;
 			s.thermalState = ThermalState();
 			s.gameRunning = CafeSystem::IsTitleRunning();
 			s.titleId = s.gameRunning ? (uint64_t)CafeSystem::GetForegroundTitleId() : 0;
@@ -343,14 +387,14 @@ namespace
 			// periodic summary every 5 seconds
 			if (tick % 5 == 0)
 			{
-				LogLine(fmt::format("[perf] fps {:.1f} frame avg {:.1f} max {:.1f} ms hitches +{} | shaders +{} pipelines +{} | jit {} +{} blocks, arena {:.0f}/{:.0f} MB, failed {} | audio {:.0f}/{:.0f} ms ({:.0f}%) underruns +{} overflows +{}{} | h264 {:.0f} fps {:.1f} ms (max {:.1f}) | mem {:.0f} MB used, {:.0f} MB left | thermal {}",
+				LogLine(fmt::format("[perf] fps {:.1f} frame avg {:.1f} max {:.1f} ms hitches +{} | shaders +{} pipelines +{} | jit {} +{} blocks, arena {:.0f}/{:.0f} MB, failed {} | audio {:.0f}/{:.0f} ms ({:.0f}%) underruns +{} overflows +{}{} | h264 {:.0f} fps {:.1f} ms (max {:.1f}) | mem {:.0f} MB used (guest {:.0f}, gpu {:.0f}, other {:.0f}), {:.0f} MB left | thermal {}",
 					s.fps, s.frameMsAvg, s.frameMsMax, s.hitchesTotal - perfPrevHitches,
 					s.shaderCompilesTotal - perfPrevShaders, s.pipelineCompilesTotal - perfPrevPipelines,
 					JitModeName(s.jitMode), s.jitBlocksTotal - perfPrevJit, s.jitArenaUsedMB, s.jitArenaMB, s.jitFailedTotal,
 					s.audioBufferedMs, s.audioTargetMs, s.audioFillPct, s.audioUnderrunsTotal - perfPrevUnderruns, s.audioOverflowsTotal - perfPrevOverflows,
 					s.audioPadActive ? " (+gamepad audio)" : "",
 					s.h264FpsLastSec, s.h264AvgMsLastSec, s.h264MaxMs,
-					s.memFootprintMB, s.memAvailableMB, ThermalName(s.thermalState)));
+					s.memFootprintMB, s.memGuestMB, s.memGpuMB, std::max(0.0f, s.memFootprintMB - s.memGuestMB - s.memGpuMB), s.memAvailableMB, ThermalName(s.thermalState)));
 				perfPrevHitches = s.hitchesTotal;
 				perfPrevShaders = s.shaderCompilesTotal;
 				perfPrevPipelines = s.pipelineCompilesTotal;
@@ -573,6 +617,21 @@ extern "C" void BiiU_DiagnosticsInit(const char* docsDir, const char* appInfo)
 		LogLine("[biiu] previous session ended unexpectedly while running: " + s_prevSessionInfo);
 
 	InstallCrashHandler();
+
+	// log iOS memory pressure events: they come right before a jetsam kill
+	static dispatch_source_t s_memPressure = dispatch_source_create(DISPATCH_SOURCE_TYPE_MEMORYPRESSURE, 0,
+		DISPATCH_MEMORYPRESSURE_WARN | DISPATCH_MEMORYPRESSURE_CRITICAL, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0));
+	if (s_memPressure)
+	{
+		dispatch_source_set_event_handler(s_memPressure, ^{
+			const unsigned long level = dispatch_source_get_data(s_memPressure);
+			std::string text = fmt::format("[memory] iOS memory pressure {}: {:.0f} MB used, {:.0f} MB left",
+				(level & DISPATCH_MEMORYPRESSURE_CRITICAL) ? "CRITICAL" : "warning", MemFootprintMB(), MemAvailableMB());
+			LogLine(text);
+			BiiUTelemetry::Breadcrumb(text.c_str());
+		});
+		dispatch_resume(s_memPressure);
+	}
 	std::thread(SamplerThread).detach();
 }
 
@@ -651,7 +710,7 @@ extern "C" bool BiiU_CreateReport(char* outPath, int32_t outPathSize)
 	f << fmt::format("audio: guest {} Hz, device {} Hz, device buffer {:.1f} ms, output latency {:.1f} ms | buffered {:.0f} ms target {:.0f} ms | underruns {} overflows {} | gamepad audio {}\n",
 		s.audioGuestRate, s.audioDeviceRate, s.audioDeviceBufferMs, s.audioDeviceLatencyMs, s.audioBufferedMs, s.audioTargetMs, s.audioUnderrunsTotal, s.audioOverflowsTotal, s.audioPadActive ? "on" : "off");
 	f << fmt::format("h264: {} frames, max decode {:.1f} ms\n", s.h264FramesTotal, s.h264MaxMs);
-	f << fmt::format("memory: {:.0f} MB used, {:.0f} MB left before iOS kills the app | thermal {}\n", s.memFootprintMB, s.memAvailableMB, ThermalName(s.thermalState));
+	f << fmt::format("memory: {:.0f} MB used (guest RAM {:.0f}, GPU {:.0f}), {:.0f} MB left before iOS kills the app | thermal {}\n", s.memFootprintMB, s.memGuestMB, s.memGpuMB, s.memAvailableMB, ThermalName(s.thermalState));
 
 	f << "\n---------- previous session ----------\n";
 	f << (s_prevSessionUnexpected ? "ENDED UNEXPECTEDLY while running: " + s_prevSessionInfo : std::string("ended normally (or no game was running)\n"));
