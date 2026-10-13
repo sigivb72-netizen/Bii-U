@@ -1,0 +1,83 @@
+# XcodeGen spec for the Bii-U iOS app (the MeloCafe SwiftUI front end).
+# CI generates BiiU.xcodeproj from this file; the core (Cemu.framework) is built
+# separately by ci/build-core.sh into ../build-ios/out.
+name: BiiU
+
+options:
+  bundleIdPrefix: io.github.biiu
+  deploymentTarget:
+    iOS: '15.0'
+
+packages:
+  MeloController:
+    # GPL-3.0, same package MeloCafe uses. Pinned so upstream pushes cannot break a build.
+    url: https://github.com/stossy11/Melo-Controller
+    revision: e39c6b7b87dc44dbbf548dc1e28fd6f0b0a5d609
+
+settings:
+  base:
+    PRODUCT_NAME: BiiU
+    PRODUCT_BUNDLE_IDENTIFIER: io.github.biiu.BiiU
+    SDKROOT: iphoneos
+    TARGETED_DEVICE_FAMILY: '1,2'
+    IPHONEOS_DEPLOYMENT_TARGET: '15.0'
+    CODE_SIGNING_ALLOWED: 'NO'
+    CODE_SIGN_IDENTITY: ''
+    SWIFT_VERSION: '5.0'
+    SWIFT_OPTIMIZATION_LEVEL: '-O'
+    SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+    SWIFT_APPROACHABLE_CONCURRENCY: 'YES'
+    SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY: 'YES'
+    SWIFT_OBJC_BRIDGING_HEADER: MeloCafe/Core/MeloCafe-Bridging-Header.h
+    CLANG_ENABLE_MODULES: 'YES'
+    FRAMEWORK_SEARCH_PATHS: '$(inherited) $(SRCROOT)/../build-ios/out'
+    LD_RUNPATH_SEARCH_PATHS: '$(inherited) @executable_path/Frameworks'
+    OTHER_LDFLAGS: '$(inherited) -Wl,-lc++abi'
+    GENERATE_INFOPLIST_FILE: 'YES'
+    INFOPLIST_FILE: MeloCafe/Assets/Info.plist
+    ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+    MARKETING_VERSION: '0.1'
+    CURRENT_PROJECT_VERSION: '1'
+    INFOPLIST_KEY_CFBundleDisplayName: Bii-U
+    INFOPLIST_KEY_GCSupportsControllerUserInteraction: 'YES'
+    INFOPLIST_KEY_GCSupportsGameMode: 'YES'
+    INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.games
+    INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: 'YES'
+    INFOPLIST_KEY_UISupportsDocumentBrowser: 'YES'
+    INFOPLIST_KEY_NSMicrophoneUsageDescription: Bii-U uses the microphone when Wii U software requests GamePad microphone input.
+    INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: 'YES'
+    INFOPLIST_KEY_UILaunchScreen_Generation: 'YES'
+    INFOPLIST_KEY_UIStatusBarHidden: 'YES'
+    INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown
+    DEAD_CODE_STRIPPING: 'YES'
+    DEBUG_INFORMATION_FORMAT: dwarf-with-dsym
+
+targets:
+  BiiU:
+    type: application
+    platform: iOS
+    sources:
+      - path: MeloCafe
+        excludes:
+          - Depedencies/**
+          - Assets/Info.plist
+          - Assets/MeloNX.xcconfig
+          - Assets/*.icon/**
+          - Assets/*.icon
+          - MeloCafe.entitlements
+    dependencies:
+      - package: MeloController
+        product: Melo-Controller
+      - framework: ../build-ios/out/Cemu.framework
+        embed: true
+      - framework: MeloCafe/Depedencies/MoltenVK.xcframework
+        embed: true
+        link: false
+      - sdk: GameController.framework
+      - sdk: Metal.framework
+    postBuildScripts:
+      - name: Copy Cemu data files into the bundle
+        basedOnDependencyAnalysis: false
+        script: |
+          "$SRCROOT/../ci/copy-bundle-data.sh"

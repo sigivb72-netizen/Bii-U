@@ -108,6 +108,13 @@ if(IOS)
 	target_link_libraries(CemuBin PRIVATE
 		"-framework Foundation"
 	)
+	# Bii-U: the Swift app calls C functions that live in these static libraries
+	# (CemuUIKit_*, GCControllerBridge_*). Force-load them so the linker keeps those
+	# objects in Cemu.framework even though nothing inside the core references them.
+	target_link_options(CemuBin PRIVATE
+		"-Wl,-force_load,$<TARGET_FILE:CemuInput>"
+		"-Wl,-force_load,$<TARGET_FILE:CemuUiKitGui>"
+	)
 endif()
 
 cemu_use_precompiled_header(CemuBin)

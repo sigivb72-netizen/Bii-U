@@ -111,12 +111,22 @@ endif()
 if (APPLE)
     enable_language(OBJC OBJCXX)
 
-    # CMake defaults to ThinLTO for Clang. Use monolithic LTO for IPO builds.
+    # Bii-U: ThinLTO with an on-disk cache keeps CI rebuilds incremental (monolithic LTO
+    # re-optimises the whole core on every link). Set BIIU_FULL_LTO=ON for MeloCafe's original setting.
+    option(BIIU_FULL_LTO "Use monolithic LTO instead of ThinLTO" OFF)
+    set(BIIU_LTO_CACHE_DIR "" CACHE PATH "ThinLTO cache directory (empty = no cache)")
     foreach(lang C CXX OBJC OBJCXX)
         if(CMAKE_${lang}_COMPILER_ID MATCHES "^(AppleClang|Clang)$")
-            set(CMAKE_${lang}_COMPILE_OPTIONS_IPO "-flto=full")
+            if(BIIU_FULL_LTO)
+                set(CMAKE_${lang}_COMPILE_OPTIONS_IPO "-flto=full")
+            else()
+                set(CMAKE_${lang}_COMPILE_OPTIONS_IPO "-flto=thin")
+            endif()
         endif()
     endforeach()
+    if(NOT BIIU_FULL_LTO AND BIIU_LTO_CACHE_DIR)
+        add_link_options("-Wl,-cache_path_lto,${BIIU_LTO_CACHE_DIR}")
+    endif()
 
     if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
         set(IOS TRUE)

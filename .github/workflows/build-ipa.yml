@@ -1,0 +1,183 @@
+name: Build IPA
+
+# Every push builds an unsigned BiiU.ipa on a macOS runner and publishes it as a
+# GitHub Release (tag b<run number>). The newest release is always at
+#   https://github.com/<owner>/<repo>/releases/latest/download/BiiU.ipa
+#
+# Speed: vcpkg's binary cache, ccache, the ThinLTO cache and the Swift package
+# checkouts are kept in the Actions cache, so a rebuild only compiles what changed.
+
+on:
+  push:
+    branches: ['**']
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+  workflow_dispatch:
+    inputs:
+      clean:
+        description: 'Ignore compiler caches (full rebuild)'
+        type: boolean
+        default: false
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  VCPKG_BINARY_SOURCES: "clear;files,${{ github.workspace }}/.vcpkg-archives,readwrite"
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
+  CCACHE_BASEDIR: ${{ github.workspace }}
+  CCACHE_MAXSIZE: 3G
+  CCACHE_COMPILERCHECK: content
+  CCACHE_SLOPPINESS: pch_defines,time_macros,include_file_mtime,include_file_ctime,clang_index_store,ivfsoverlay,modules
+  CCACHE_COMPRESS: 'true'
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Select Xcode
+        run: |
+          set -eo pipefail
+          ls -d /Applications/Xcode*.app
+          XC=$(ls -d /Applications/Xcode*.app | grep -viE "beta|release_candidate|_rc" | sort -V | tail -n1)
+          [ -n "$XC" ] || XC=$(ls -d /Applications/Xcode*.app | sort -V | tail -n1)
+          sudo xcode-select -s "$XC/Contents/Developer"
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Install build tools
+        run: brew install ninja ccache xcodegen || brew upgrade ninja ccache xcodegen || true
+
+      - name: Cache keys
+        id: keys
+        run: |
+          echo "vcpkg=$(git -C dependencies/vcpkg rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "xcode=$(xcodebuild -version | tr -d '\n ' )" >> "$GITHUB_OUTPUT"
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .vcpkg-archives
+          key: vcpkg-ios-${{ steps.keys.outputs.xcode }}-${{ steps.keys.outputs.vcpkg }}-${{ hashFiles('vcpkg.json', 'triplets/**', 'dependencies/vcpkg_overlay_ports/**', 'dependencies/vcpkg_overlay_ports_mac/**') }}
+          restore-keys: |
+            vcpkg-ios-${{ steps.keys.outputs.xcode }}-${{ steps.keys.outputs.vcpkg }}-
+
+      - name: Restore compiler caches
+        if: ${{ !inputs.clean }}
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            .ccache
+            .lto-cache
+          key: ccache-${{ steps.keys.outputs.xcode }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ steps.keys.outputs.xcode }}-
+
+      - name: Build Cemu.framework (core)
+        run: |
+          ccache -z || true
+          ./ci/build-core.sh
+          ccache -s || true
+
+      - name: Save vcpkg binary cache
+        if: always()
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: .vcpkg-archives
+          key: vcpkg-ios-${{ steps.keys.outputs.xcode }}-${{ steps.keys.outputs.vcpkg }}-${{ hashFiles('vcpkg.json', 'triplets/**', 'dependencies/vcpkg_overlay_ports/**', 'dependencies/vcpkg_overlay_ports_mac/**') }}
+
+      - name: Save compiler caches
+        if: always()
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            .ccache
+            .lto-cache
+          key: ccache-${{ steps.keys.outputs.xcode }}-${{ github.sha }}
+
+      - name: Check that every bridge function is exported by the core
+        run: ./ci/check-exports.sh
+
+      - name: Restore Swift package checkouts
+        uses: actions/cache/restore@v4
+        with:
+          path: .spm
+          key: spm-${{ hashFiles('MeloCafe/project.yml') }}
+
+      - name: Build the app
+        run: |
+          set -eo pipefail
+          cd MeloCafe
+          xcodegen generate
+          xcodebuild -project BiiU.xcodeproj -scheme BiiU -sdk iphoneos -configuration Release \
+            -derivedDataPath "$GITHUB_WORKSPACE/build-app" \
+            -clonedSourcePackagesDirPath "$GITHUB_WORKSPACE/.spm" \
+            CODE_SIGNING_ALLOWED=NO build 2>&1 | tee ../xcodebuild.log | grep -E "error:|warning: .*BiiU|BUILD" || true
+          test "${PIPESTATUS[0]}" = 0 || { tail -100 ../xcodebuild.log; exit 1; }
+
+      - name: Save Swift package checkouts
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: .spm
+          key: spm-${{ hashFiles('MeloCafe/project.yml') }}
+
+      - name: Package IPA
+        run: |
+          set -eo pipefail
+          APP=build-app/Build/Products/Release-iphoneos/BiiU.app
+          ls "$APP" "$APP/Frameworks"
+          VERSION="0.1.${{ github.run_number }}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          ./ci/package-ipa.sh "$APP" BiiU.ipa "$VERSION" "${{ github.run_number }}"
+          (cd build-app/Build/Products/Release-iphoneos && zip -qry "$GITHUB_WORKSPACE/BiiU-dSYM.zip" *.dSYM) || true
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BiiU-ipa
+          path: |
+            BiiU.ipa
+            BiiU-dSYM.zip
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eo pipefail
+          TAG="b${{ github.run_number }}"
+          {
+            echo "Build ${{ github.run_number }} from \`${GITHUB_REF_NAME}\` @ \`${GITHUB_SHA::7}\`"
+            echo
+            git log -1 --format=%B "$GITHUB_SHA" | grep -v -E "^(Co-Authored-By|Claude-Session):"
+            echo
+            echo "Install: download **BiiU.ipa** below and import it into LiveContainer."
+          } > notes.md
+          gh release create "$TAG" BiiU.ipa BiiU-dSYM.zip \
+            --target "$GITHUB_SHA" --title "Bii-U build ${{ github.run_number }} (${GITHUB_SHA::7})" \
+            --notes-file notes.md --latest
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            configure.log
+            build.log
+            xcodebuild.log
+            build-ios/vcpkg-manifest-install.log
+          if-no-files-found: ignore
