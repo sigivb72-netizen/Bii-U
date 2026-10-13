@@ -106,7 +106,10 @@ if(IOS)
 		ios/BiiUDiagnostics.h
 		ios/BiiUDiagnostics.mm
 	)
-	set_source_files_properties(gui/uikit/EmulatedUSBDevices.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+	# ARC files cannot use the (non-ARC) precompiled header; include it textually instead.
+	set_source_files_properties(gui/uikit/EmulatedUSBDevices.mm PROPERTIES
+		COMPILE_OPTIONS "-fobjc-arc;-include;${CMAKE_SOURCE_DIR}/src/Common/precompiled.h"
+		SKIP_PRECOMPILE_HEADERS ON)
 	target_link_libraries(CemuBin PRIVATE
 		"-framework Foundation"
 	)

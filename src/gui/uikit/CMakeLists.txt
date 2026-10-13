@@ -24,4 +24,7 @@ if(ENABLE_SDL)
   target_link_libraries(CemuUiKitGui PRIVATE SDL3::SDL3)
 endif()
 
-set_source_files_properties(NativeKeyboard.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+# ARC files cannot use the (non-ARC) precompiled header; include it textually instead.
+set_source_files_properties(NativeKeyboard.mm PROPERTIES
+  COMPILE_OPTIONS "-fobjc-arc;-include;${CMAKE_SOURCE_DIR}/src/Common/precompiled.h"
+  SKIP_PRECOMPILE_HEADERS ON)
